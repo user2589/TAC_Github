@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 
 """
 Script for gathering GitHub data
@@ -6,12 +7,56 @@ Script for gathering GitHub data
 import pandas as pd
 import stscraper as scraper
 from stutils import decorators as d
+from stutils import mapreduce
 
+import argparse
 import logging
+
+from stutils.decorators import cache_iterator
+
+# import shutil
+# import tempfile
+# import json
+# import ijson.backends.yajl2 as ijson
+# from functools import wraps
+#
+#
+# class cache_iterator(d.fs_cache):
+#     """ A modification of fs_cache to handle large unstructured iterators
+#         - e.g., a result of a GitHubAPI call
+#     """
+#     def __call__(self, func):
+#         @wraps(func)
+#         def wrapper(*args):
+#             cache_fpath = self.get_cache_fname(
+#                 func.__name__, *args, **{'extension': 'json'})
+#
+#             if not self.expired(cache_fpath):
+#                 cache_fh = open(cache_fpath, 'rb')
+#                 for item in ijson.items(cache_fh, "item"):
+#                     yield item
+#             else:
+#                 # if iterator is not exhausted, the resulting file
+#                 # will contain invalid JSON. So, we write to a tempfile
+#                 # and rename when the iterator is exhausted
+#                 cache_fh = tempfile.TemporaryFile()
+#                 sep = "[\n"
+#                 for item in func(*args):
+#                     cache_fh.write(sep)
+#                     sep = ",\n"
+#                     cache_fh.write(json.dumps(item))
+#                     yield item
+#                 cache_fh.write("]")
+#                 cache_fh.flush()
+#                 # os.rename will fail if /tmp is mapped to a different device
+#                 shutil.copyfileobj(cache_fh, cache_fpath)
+#                 cache_fh.close()
+#
+#         return wrapper
 
 
 fs_cache = d.typed_fs_cache('filtered')
-cached_iterator = d.cache_iterator('raw')
+cached_iterator = cache_iterator('raw')
 gh_api = scraper.GitHubAPI()
 
 
@@ -56,10 +101,13 @@ def get_issues(repo):
                 'role': 'author_association',
                 'reactions': 'reactions__total_count',
             }, issue)
-            i['labels'] = ",".join(issue['labels'])
+            i['labels'] = ",".join(l['name'] for l in issue['labels'])
             yield i
 
-    return pd.DataFrame(gen()).set_index('number')
+    return pd.DataFrame(
+        gen(), columns=('number', 'id', 'state', 'created_at', 'updated_at',
+                        'closed_at', 'user', 'role', 'reactions')
+    ).set_index('number')
 
 
 @fs_cache('issue_comments', 2)
@@ -77,7 +125,10 @@ def get_issue_comments(repo):
                 'reactions':
                     scraper.json_path(comment, 'reactions__total_count')
             }
-    return pd.DataFrame(gen()).set_index(['issue_no', 'id'])
+    return pd.DataFrame(
+            gen(), columns=('id', 'issue_no', 'body', 'user', 'role',
+                            'created_at', 'updated_at', 'reactions')
+        ).set_index(['issue_no', 'id'])
 
 
 @fs_cache('issue_events', 2)
@@ -98,7 +149,9 @@ def get_issue_events(repo):
                 'created_at': 'created_at',
             }, event)
 
-    return pd.DataFrame(gen()).set_index(['issue_no', 'id'])
+    return pd.DataFrame(
+        gen(), columns=('id', 'issue_no', 'event', 'user', 'created_at')
+    ).set_index(['issue_no', 'id'])
 
 
 @fs_cache('pull_requests')
@@ -109,22 +162,25 @@ def get_pulls(repo):
                 'number': pr['number'],
                 'title': pr['title'],
                 'state': pr['state'],
-                'user': pr['user__login'],
+                'user': pr['user']['login'],
                 'created_at': pr['created_at'],
                 'updated_at': pr['updated_at'],
                 'closed_at': pr['closed_at'],
-                'labels': ",".join(pr['labels']),
+                'labels': ",".join(l['name'] for l in pr['labels']),
                 'role': pr['author_association']
             }
 
-    return pd.DataFrame(gen()).set_index('number')
+    return pd.DataFrame(
+        gen(), columns=('number', 'title', 'state', 'user', 'created_at',
+                        'updated_at', 'closed_at', 'labels', 'role')
+    ).set_index('number')
 
 
 @cached_iterator
 def get_raw_pull_commits(repo):
-    for pull in get_pulls(repo):
-        for commit in gh_api.pull_request_commits(repo, pull['number']):
-            commit['pr_no'] = pull['number']
+    for pr_no in get_pulls(repo).index:
+        for commit in gh_api.pull_request_commits(repo, pr_no):
+            commit['pr_no'] = pr_no
             yield commit
 
 
@@ -145,30 +201,41 @@ def get_pull_commits(repo):
                 'message': 'commit__message'
             }, commit)
 
-    return pd.DataFrame(gen()).set_index(['pr_no', 'sha'])
+    return pd.DataFrame(
+        gen(), columns=('pr_no', 'sha', 'author', 'author_email', 'authored_at',
+                        'committer', 'committer_email', 'committed_at',
+                        'comment_count', 'message')
+    ).set_index(['pr_no', 'sha'])
 
 
 @cached_iterator
 def get_raw_review_comments(repo):
-    for pull in get_pulls(repo):
-        for comment in gh_api.review_comments(repo, pull['number']):
-            comment['pr_no'] = pull['number']
+    for pr_no in get_pulls(repo).index:
+        for comment in gh_api.review_comments(repo, pr_no):
+            comment['pr_no'] = pr_no
             yield comment
 
 
 @fs_cache('pull_commits', 2)
-def get_pull_review_comments(repo, pr_id):
-    for comment in get_raw_review_comments(repo):
-        yield scraper.json_map({
-            'pr_no': 'pr_no',
-            'user': 'user__login',
-            'created_at': 'created_at',
-            'updated_at': 'updated_at',
-            'body': 'body',
-            'path': 'path',
-            'position': 'original_position',
-            'role': 'author_association'
-        }, comment)
+def get_pull_review_comments(repo):
+    def gen():
+        for comment in get_raw_review_comments(repo):
+            yield scraper.json_map({
+                'pr_no': 'pr_no',
+                'id': 'id',
+                'user': 'user__login',
+                'created_at': 'created_at',
+                'updated_at': 'updated_at',
+                'body': 'body',
+                'path': 'path',
+                'position': 'original_position',
+                'role': 'author_association'
+            }, comment)
+
+    return pd.DataFrame(
+        gen(), columns=('pr_no', 'id', 'user', 'created_at', 'updated_at',
+                        'body', 'path', 'position', 'role')
+    ).set_index(['pr_no', 'id'])
 
 
 @fs_cache('labels')
@@ -189,15 +256,30 @@ metrics = {
 }
 
 
+def collect_data(repo, row):
+    logging.info('Processing %s', repo)
+    if gh_api.project_exists(repo):
+        for metric, provider in metrics.items():
+            provider(repo)
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description="Collect cache for ")
+    parser.add_argument('-i', '--input', default="-",
+                        type=argparse.FileType('r'),
+                        help='Input filename, "-" or skip for stdin')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help="Log progress to stderr")
+    args = parser.parse_args()
+
+    logging.basicConfig(format='%(asctime)s %(message)s',
+                        level=logging.INFO if args.verbose else logging.WARNING)
 
     repos = pd.read_csv('34k_dataset_1000_3_10.csv', index_col='repo')
     # repo_index = repo_index.iloc[0:2]  # for testing with 2 repos
     logging.info('Repos found: %d', len(repos))
 
-    for repo in repos.index:
-        logging.info('Processing %s', repo)
-        if not gh_api.project_exists(repo):
-            continue
-        for metric, provider in metrics.items():
-            _ = provider(repo)
+    # mapreduce.map(collect_data, repos)
+    for repository, row in repos.iterrows():
+        collect_data(repository, row)
