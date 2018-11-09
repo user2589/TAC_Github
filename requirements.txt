@@ -1,0 +1,3 @@
+pandas
+strudel.scraper
+strudel.utils
