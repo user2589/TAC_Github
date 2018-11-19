@@ -7,52 +7,8 @@ Script for gathering GitHub data
 import pandas as pd
 import stscraper as scraper
 from stutils import decorators as d
-from stutils import mapreduce
-
-import argparse
-import logging
 
 from stutils.decorators import cache_iterator
-
-# import shutil
-# import tempfile
-# import json
-# import ijson.backends.yajl2 as ijson
-# from functools import wraps
-#
-#
-# class cache_iterator(d.fs_cache):
-#     """ A modification of fs_cache to handle large unstructured iterators
-#         - e.g., a result of a GitHubAPI call
-#     """
-#     def __call__(self, func):
-#         @wraps(func)
-#         def wrapper(*args):
-#             cache_fpath = self.get_cache_fname(
-#                 func.__name__, *args, **{'extension': 'json'})
-#
-#             if not self.expired(cache_fpath):
-#                 cache_fh = open(cache_fpath, 'rb')
-#                 for item in ijson.items(cache_fh, "item"):
-#                     yield item
-#             else:
-#                 # if iterator is not exhausted, the resulting file
-#                 # will contain invalid JSON. So, we write to a tempfile
-#                 # and rename when the iterator is exhausted
-#                 cache_fh = tempfile.TemporaryFile()
-#                 sep = "[\n"
-#                 for item in func(*args):
-#                     cache_fh.write(sep)
-#                     sep = ",\n"
-#                     cache_fh.write(json.dumps(item))
-#                     yield item
-#                 cache_fh.write("]")
-#                 cache_fh.flush()
-#                 # os.rename will fail if /tmp is mapped to a different device
-#                 shutil.copyfileobj(cache_fh, cache_fpath)
-#                 cache_fh.close()
-#
-#         return wrapper
 
 
 fs_cache = d.typed_fs_cache('filtered')
@@ -242,44 +198,3 @@ def get_pull_review_comments(repo):
 def get_labels(repo):
     labels = gh_api.repo_labels(repo)
     return pd.Series(labels, index=labels)
-
-
-metrics = {
-    'commits': get_commits,
-    'issues': get_issues,
-    'issue_comments': get_issue_comments,
-    'issue_events': get_issue_events,
-    'pulls': get_pulls,
-    'pull_commits': get_pull_commits,
-    'pull_review_comments': get_pull_review_comments,
-    'labels': get_labels
-}
-
-
-def collect_data(repo, row):
-    logging.info('Processing %s', repo)
-    if gh_api.project_exists(repo):
-        for metric, provider in metrics.items():
-            provider(repo)
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description="Collect cache for ")
-    parser.add_argument('-i', '--input', default="-",
-                        type=argparse.FileType('r'),
-                        help='Input filename, "-" or skip for stdin')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                        help="Log progress to stderr")
-    args = parser.parse_args()
-
-    logging.basicConfig(format='%(asctime)s %(message)s',
-                        level=logging.INFO if args.verbose else logging.WARNING)
-
-    repos = pd.read_csv('34k_dataset_1000_3_10.csv', index_col='repo')
-    # repo_index = repo_index.iloc[0:2]  # for testing with 2 repos
-    logging.info('Repos found: %d', len(repos))
-
-    # mapreduce.map(collect_data, repos)
-    for repository, row in repos.iterrows():
-        collect_data(repository, row)
