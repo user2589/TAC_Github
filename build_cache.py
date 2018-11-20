@@ -38,10 +38,16 @@ metrics = {
 def collect_data(repo, row):
     logging.info('Processing %s', repo)
     if gh_api.project_exists(repo):
-        for metric, provider in raw_metrics.items():
-            provider(repo)
-        for metric, provider in metrics.items():
-            provider(repo)
+        try:
+            for metric, provider in raw_metrics.items():
+                provider(repo)
+            for metric, provider in metrics.items():
+                provider(repo)
+        except:
+            logging.warning('EXCEPTION: %s', repo)
+            raise
+    else:
+        logging.warning('DOES NOT EXIST: %s', repo)
 
 
 if __name__ == '__main__':

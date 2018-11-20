@@ -8,11 +8,8 @@ import pandas as pd
 import stscraper as scraper
 from stutils import decorators as d
 
-from stutils.decorators import cache_iterator
-
-
 fs_cache = d.typed_fs_cache('filtered')
-cached_iterator = cache_iterator('raw')
+cached_iterator = d.cache_iterator('raw')
 gh_api = scraper.GitHubAPI()
 
 

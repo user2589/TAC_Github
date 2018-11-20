@@ -100,6 +100,7 @@ def user_roles_log(repo):
 def collect_data(repo, row):
     events_log(repo)
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Build feature files for TAC project")
