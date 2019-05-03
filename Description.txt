@@ -1,0 +1,17 @@
+
+the general idea is to understand how teams guide attention focus
+with the flow of incoming events, like issue reports, PRs etc.
+
+What variables (features) affect team performance
+Some features of the team/project lead to process variables
+    can be in terms of temporal or structural features
+        (e.g. number of labels as an indicator of issue triaging maturity)
+
+    new concept: transactive attention control:
+        how team prioritizes.
+
+    this project:
+        with the diversity of npm, test:
+            - for different input conditions, under which conditions
+                projects are successful (or not)
+            - first, we need to separate

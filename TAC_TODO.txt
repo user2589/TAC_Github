@@ -1,0 +1,19 @@
+TAC:
+- check size of the core team
+    - send an email with the distribution and decide the cutoff
+- determine core members
+    - check how expensive is to get people who are members/collaborators?
+        - i.e. authored a first-parent commit or closed/reopened an issue
+    if too expensive (unlikely), get by the amount of contributions
+- scrape their activity
+    - github timeline (one last year of the activity, let's start at 2017)
+- calculate complexity of projects
+    - build a co-commit network (since 2017 - no, actually get the full history)
+    - co-commit network
+        - if there is no Python implementation, Kathlen can help with her developers.
+            export co-commit network into a set of CSV files
+- aggregate event metrics
+    - Pranav has a list of "interesting" events to count
+    - also, bursiness (basically coefficient of variation / Fano factor)
+? the idea is to regress it to npmjs quality/maintenance/popularity metrics
+    controlling for size, team size, repo complexity etc.

@@ -6,11 +6,13 @@ Script for gathering GitHub data
 
 import csv
 import datetime
+import json
 import os
 
 import choicemodels
 import git
 import pandas as pd
+import networkit as nk
 import numpy as np
 import stscraper
 import stutils
@@ -36,6 +38,11 @@ get_raw_issues = cached_iterator(gh_api.repo_issues)
 get_raw_issue_comments = cached_iterator(gh_api.repo_issue_comments)
 get_raw_issue_events = cached_iterator(gh_api.repo_issue_events)
 get_raw_pulls = cached_iterator(gh_api.repo_pulls)
+
+
+def final_repos():
+    return pd.read_csv('slugs_shortlist.csv',
+                       index_col=0, squeeze=True)
 
 
 @fs_cache('commits')
@@ -246,7 +253,7 @@ def get_assignees(repo_slug):
     return assignments[['user', 'created_at']].groupby('user').min()
 
 
-def get_collaborators(repo_slug):
+def get_committers(repo_slug):
     """Given repository slug, get people who committed directly to master.
 
     Returns:
@@ -373,3 +380,108 @@ def get_fp_chain(repo):
         commit = commit.parents and commit.parents[0]
     commits.reverse()
     return commits
+
+
+def get_commit_graph(repo):
+    # TODO: custom granularity (month/week)
+    g = nk.Graph(weighted=True)
+    modularity = {}
+    nodes = {}
+    fp_commits = get_fp_chain(repo)
+    month = fp_commits[0].authored_datetime.strftime("%Y-%m")
+    for parent_idx, commit in enumerate(fp_commits[1:]):
+        commit_month = commit.authored_datetime.strftime("%Y-%m")
+        if commit_month > month:
+            community = nk.community.PLM(g)  # PLP is ~5% faster but coarse
+            community.run()
+            partition = community.getPartition()
+            modularity[month] = (partition.numberOfSubsets(), len(nodes), len(g.edges()))
+            month = commit_month
+        parent = fp_commits[parent_idx]
+        files = []  # files changed in this commit
+        for diff in commit.diff(parent):
+            fname = diff.a_path
+            if fname not in nodes:
+                nodes[fname] = g.addNode()
+            files.append(fname)
+        for i, file1 in enumerate(files[:-1]):
+            for file2 in files[i+1:]:
+                g.increaseWeight(nodes[file1], nodes[file2], 1)
+    return g, modularity, nodes
+
+
+def get_commit_modularity(repo):
+    g, modularity, nodes = get_commit_graph(repo)
+    return pd.DataFrame(modularity).T.rename(
+        columns={0: 'louvain', 1: 'files', 2: 'edges'})
+
+
+def extract_package_name(json_fname):
+    try:
+        with open(json_fname) as fh:
+            return json.load(fh).get('name')
+    except (IOError, ValueError):
+        return None
+
+
+def repo_package_names(repo):
+    """find all package.json in """
+    metadata_fname = 'package.json'
+
+    def gen(workdir):
+        for root, dirs, files in os.walk(workdir):
+            if metadata_fname in files:
+                pkgname = extract_package_name(os.path.join(root, metadata_fname))
+                if pkgname is not None:
+                    yield pkgname
+
+    return set(gen(repo.working_dir))
+
+#
+# TODO: move to final.py
+# @d.fs_cache('final')
+# def package_names():
+#     repo_slugs = final_repos()
+#     return repo_slugs.map(
+#         lambda repo_slug: package_name(get_repository(repo_slug)))
+
+
+def get_collaborators(repo_slug):
+    # TODO: implement
+    # extract from master commits
+    # extract from events
+    pass
+
+
+def get_contributors(repo_slug):
+    # TODO: implement
+    pass
+
+
+def collaborators_timeline(repo_slug, timeout=6):
+    # TODO: implement
+    pass
+
+
+def capacity_timeline(repo_slug, timeout=6):
+    # TODO: implement
+    collaborators = collaborators_timeline(repo_slug, timeout)
+
+
+def MTI_timeline(repo_slug):
+    # TODO: implement
+    pass
+
+
+def issue_event_timeline(
+        start, length, granularity='M', restrict_events=None,
+        include_collaborators=True, include_contributors=True, include_users=True):
+    # TODO: implement
+    pass
+
+
+def fano_timeline(
+        start, length, granularity='M', restrict_events=None,
+        include_collaborators=True, include_contributors=True, include_users=True):
+    # TODO: implement
+    pass
