@@ -27,8 +27,9 @@ TAC_CACHE_PATH = os.path.join(
 if not os.path.isdir(TAC_CACHE_PATH):
     os.mkdir(TAC_CACHE_PATH)
 
-
-fs_cache = d.typed_fs_cache('filtered', expires=3600*24*30*12)
+ONE_YEAR = expires=3600 * 24 * 30 * 12
+fs_cache_filtered = d.typed_fs_cache('filtered', expires=ONE_YEAR)
+fs_cache_aggregated = d.typed_fs_cache('aggregated', expires=ONE_YEAR)
 cached_iterator = d.cache_iterator('raw')
 gh_api = stscraper.GitHubAPI()
 scraper = stgithub.Scraper()
@@ -40,15 +41,30 @@ get_raw_issue_events = cached_iterator(gh_api.repo_issue_events)
 get_raw_pulls = cached_iterator(gh_api.repo_pulls)
 
 
+# =====================================
+# List projects
+# =====================================
+
+def all_projects():
+    # type: () -> pd.Series
+    """ Get list of all available projects """
+    pd.read_csv('34k_dataset_1000_3_10.csv', usecols=['repo'], squeeze=True)
+
+
 def final_repos():
-    return pd.read_csv('slugs_shortlist.csv',
-                       index_col=0, squeeze=True)
+    # type: () -> pd.Series
+    """ Only repos satisfying final criteria """
+    return pd.read_csv('slugs_shortlist.csv', index_col=0, squeeze=True)
 
 
-@fs_cache('commits')
-def get_commits(repo):
+# =====================================
+# Individual project metrics
+# =====================================
+
+@fs_cache_filtered('commits')
+def get_commits(repo_slug):
     def gen():
-        for commit in get_raw_commits(repo):
+        for commit in get_raw_commits(repo_slug):
             yield stscraper.json_map({
                 'sha': 'sha',
                 'author': 'author__login',
@@ -64,10 +80,10 @@ def get_commits(repo):
     return pd.DataFrame(gen()).set_index('sha')
 
 
-@fs_cache('issues')
-def get_issues(repo):
+@fs_cache_filtered('issues')
+def get_issues(repo_slug):
     def gen():
-        for issue in get_raw_issues(repo):
+        for issue in get_raw_issues(repo_slug):
             i = stscraper.json_map({
                 'number': 'number',
                 'id': 'id',
@@ -88,10 +104,10 @@ def get_issues(repo):
     ).set_index('number')
 
 
-@fs_cache('issue_comments', 2)
-def get_issue_comments(repo):
+@fs_cache_filtered('issue_comments', 2)
+def get_issue_comments(repo_slug):
     def gen():
-        for comment in get_raw_issue_comments(repo):
+        for comment in get_raw_issue_comments(repo_slug):
             yield {
                 'id': comment['id'],
                 'issue_no': int(comment['issue_url'].rsplit("/", 1)[-1]),
@@ -109,8 +125,8 @@ def get_issue_comments(repo):
         ).set_index(['issue_no', 'id'])
 
 
-@fs_cache('issue_events', 2)
-def get_issue_events(repo):
+@fs_cache_filtered('issue_events')
+def get_issue_events(repo_slug):
     # event: mentioned
     #       user = the one who was mentioned
     # event: closed|renamed
@@ -118,7 +134,7 @@ def get_issue_events(repo):
     # event: subscribed
     #       doesn't make any sense
     def gen():
-        for event in get_raw_issue_events(repo):
+        for event in get_raw_issue_events(repo_slug):
             yield stscraper.json_map({
                 'id': 'id',
                 'issue_no': 'issue__number',
@@ -129,13 +145,13 @@ def get_issue_events(repo):
 
     return pd.DataFrame(
         gen(), columns=('id', 'issue_no', 'event', 'user', 'created_at')
-    ).set_index(['issue_no', 'id'])
+    ).set_index('issue_no')
 
 
-@fs_cache('pull_requests')
-def get_pulls(repo):
+@fs_cache_filtered('pull_requests')
+def get_pulls(repo_slug):
     def gen():
-        for pr in get_raw_pulls(repo):
+        for pr in get_raw_pulls(repo_slug):
             yield {
                 'number': pr['number'],
                 'title': pr['title'],
@@ -154,7 +170,7 @@ def get_pulls(repo):
     ).set_index('number')
 
 
-@fs_cache('issues_and_prs')
+@fs_cache_filtered('issues_and_prs')
 def get_issues_and_prs(repo_slug):
     issues = get_issues(repo_slug)
     issues['is_pr'] = False
@@ -166,17 +182,17 @@ def get_issues_and_prs(repo_slug):
 
 
 @cached_iterator
-def get_raw_pull_commits(repo):
-    for pr_no in get_pulls(repo).index:
-        for commit in gh_api.pull_request_commits(repo, pr_no):
+def get_raw_pull_commits(repo_slug):
+    for pr_no in get_pulls(repo_slug).index:
+        for commit in gh_api.pull_request_commits(repo_slug, pr_no):
             commit['pr_no'] = pr_no
             yield commit
 
 
-@fs_cache('pull_commits', 2)
-def get_pull_commits(repo):
+@fs_cache_filtered('pull_commits', 2)
+def get_pull_commits(repo_slug):
     def gen():
-        for commit in get_raw_pull_commits(repo):
+        for commit in get_raw_pull_commits(repo_slug):
             yield stscraper.json_map({
                 'pr_no': 'pr_no',
                 'sha': 'sha',
@@ -198,17 +214,17 @@ def get_pull_commits(repo):
 
 
 @cached_iterator
-def get_raw_review_comments(repo):
-    for pr_no in get_pulls(repo).index:
-        for comment in gh_api.review_comments(repo, pr_no):
+def get_raw_review_comments(repo_slug):
+    for pr_no in get_pulls(repo_slug).index:
+        for comment in gh_api.review_comments(repo_slug, pr_no):
             comment['pr_no'] = pr_no
             yield comment
 
 
-@fs_cache('pull_commits', 2)
-def get_pull_review_comments(repo):
+@fs_cache_filtered('pull_commits')
+def get_pull_review_comments(repo_slug):
     def gen():
-        for comment in get_raw_review_comments(repo):
+        for comment in get_raw_review_comments(repo_slug):
             yield stscraper.json_map({
                 'pr_no': 'pr_no',
                 'id': 'id',
@@ -227,17 +243,27 @@ def get_pull_review_comments(repo):
     ).set_index(['pr_no', 'id'])
 
 
-@fs_cache('labels')
-def get_labels(repo):
-    labels = gh_api.repo_labels(repo)
+@fs_cache_filtered('labels')
+def get_labels(repo_slug):
+    labels = gh_api.repo_labels(repo_slug)
     return pd.Series(labels, index=labels)
 
 
-@fs_cache('profiles', idx=2)
+# =====================================
+# User data
+# =====================================
+
+
+@fs_cache_filtered('profiles', idx=2)
 def get_profile(user, start=None, to=None):
     profile = pd.DataFrame(scraper.full_user_activity_timeline(user, start, to))
     profile['repo'] = profile['repo'].fillna('')
     return profile.set_index(['month', 'repo']).fillna(0).astype(int)
+
+
+# =====================================
+# Contributors
+# =====================================
 
 
 def get_assignments(repo_slug):
@@ -324,7 +350,7 @@ def _get_choice_table(repo_slug):
             }
 
 
-@fs_cache('choice_table')
+@fs_cache_filtered('choice_table')
 def get_choice_table(repo_slug):
     return pd.DataFrame(_get_choice_table(repo_slug))
 
@@ -374,7 +400,7 @@ def get_repository(repo_slug):
 def get_fp_chain(repo):
     """ Get chain of first-parent commits of the given repository """
     commits = []
-    commit = repo.refs.master.commit
+    commit = repo.head.commit
     while commit:
         commits.append(commit)
         commit = commit.parents and commit.parents[0]
@@ -382,15 +408,26 @@ def get_fp_chain(repo):
     return commits
 
 
-def get_commit_graph(repo):
-    # TODO: custom granularity (month/week)
+GRANULARITY_LEVELS = {
+    'week': "%Y-w%V",
+    'month': "%Y-%m",
+    'day': "%Y-%m-%d"
+}
+
+
+def period_formatstring(period):
+    return GRANULARITY_LEVELS.get(period)
+
+
+def get_commit_graph(repo, period='month'):
     g = nk.Graph(weighted=True)
+    date_format = period_formatstring(period)
     modularity = {}
     nodes = {}
     fp_commits = get_fp_chain(repo)
-    month = fp_commits[0].authored_datetime.strftime("%Y-%m")
+    month = fp_commits[0].authored_datetime.strftime(date_format)
     for parent_idx, commit in enumerate(fp_commits[1:]):
-        commit_month = commit.authored_datetime.strftime("%Y-%m")
+        commit_month = commit.authored_datetime.strftime(date_format)
         if commit_month > month:
             community = nk.community.PLM(g)  # PLP is ~5% faster but coarse
             community.run()
@@ -410,10 +447,260 @@ def get_commit_graph(repo):
     return g, modularity, nodes
 
 
-def get_commit_modularity(repo):
-    g, modularity, nodes = get_commit_graph(repo)
+def get_commit_modularity(repo, period='month'):
+    """
+
+    Args:
+        repo (git.Repo): repository to analyze
+            for file co-commit network modularity.
+            repo object can be obtained by function `get_repository(repo_slug)`
+        period (str): {'month'|'week'|'day'}: granularity of observations
+
+    Returns:
+        pd.DataFrame: dataframe with 3 columns:
+            index: (str) date formatted according to the period
+            'louvain': louvain modularity of file co-commit network
+            'files': number of nodes (i.e. files) in co-commit network
+            'edges': number of edges in the network
+
+    """
+    g, modularity, nodes = get_commit_graph(repo, period)
     return pd.DataFrame(modularity).T.rename(
         columns={0: 'louvain', 1: 'files', 2: 'edges'})
+
+
+# user types
+NOBODY = 0  # no special role
+COMMENTER = 1  # somebody who commented on an issue (but didn't report)
+REVIEWER = 2  # somebody who left a review comment
+USER = 3  # usually, issue reporter
+CONTRIBUTOR = 5  # somebody who contributed code
+COLLABORATOR = 7  # somebody with direct commit access
+
+ROLE_NAMES = {
+    NOBODY: 'nobody',
+    COMMENTER: 'commenter',
+    REVIEWER: 'reviewer',
+    USER: 'user',  # those who at least reported the issue
+    CONTRIBUTOR: 'contributor',
+    COLLABORATOR: 'collaborator'
+}
+
+# event types
+ISSUE = 1
+REVIEW = 2
+PULL_REQUEST = 4
+COMMIT = 8
+
+# comments are not included in the events
+EVENT_ROLES = {  # assuming user != reporter
+    'subscribed': COLLABORATOR,
+    'mentioned': COMMENTER,
+    'labeled': COLLABORATOR,
+    'closed': COLLABORATOR,
+    'merged': COLLABORATOR,
+    'referenced': COMMENTER,
+    'renamed': COLLABORATOR,
+    'review_dismissed': COLLABORATOR,
+    'assigned': COLLABORATOR,
+    'review_requested': COLLABORATOR,
+    'comment_deleted': COLLABORATOR,
+    'head_ref_deleted': COLLABORATOR,
+    'reopened': COLLABORATOR,
+    'unlabeled': COLLABORATOR,
+    'milestoned': COLLABORATOR,
+    'demilestoned': COLLABORATOR,
+    'unassigned': COLLABORATOR,
+    'marked_as_duplicate': COLLABORATOR,
+    'unlocked': COLLABORATOR,
+    'locked': COLLABORATOR,
+    'head_ref_restored': COLLABORATOR,
+    'unsubscribed': NOBODY,
+    'base_ref_changed': COLLABORATOR,
+    'review_request_removed': COLLABORATOR,
+}
+
+
+def _role_events(repo_slug):
+    """Get all events indicating user roles
+
+    Args:
+        repo_slug: github repository slug
+
+    Returns:
+        pd.Dataframe: full list of events with columns:
+            `date`, `user`, `event_type`, `role`.
+            `date`: timestamp when this event happened (a datetime object).
+                In most cases, you would want to aggregate on those
+            `user`: github login of the user whose affiliation
+                is indicated by the event
+            `role`: role assumed by this event
+                (not the prior history, just this event).
+
+    >>> utils._role_events('mui-org/material-ui').head()
+                           date  event_type  role     user
+    0 2014-08-18 19:11:54+00:00           8     7  hai-cea
+    1 2014-08-18 19:43:21+00:00           8     7  hai-cea
+    2 2014-08-18 20:20:46+00:00           8     7  hai-cea
+    3 2014-08-18 20:27:12+00:00           8     5  hai-cea
+    4 2014-08-18 20:51:32+00:00           8     7  hai-cea
+
+    """
+    # get reporters and type
+    # get_issue_events returns events for both issues and pull requests
+    iss = get_issues_and_prs(repo_slug)
+    ie = get_issue_events(repo_slug)
+    ie['reporter'] = ie.index.map(iss['user'])
+    ie['is_pr'] = ie.index.map(iss['is_pr'])
+    ie['role'] = ie['event'].map(EVENT_ROLES)
+    ie.loc[ie['user'] == ie['reporter'], 'role'] = USER
+    # ie = ie[ie['role'] >= USER]
+    ie['event_type'] = ISSUE
+    # sometimes events were retrieved after issues so we don't have info
+    # events are considered issues by default
+    ie.loc[ie['is_pr'].fillna(False), 'event_type'] = PULL_REQUEST
+
+    # review comments
+    rc = get_pull_review_comments(repo_slug)[['user', 'created_at']]
+    rc['event_type'] = REVIEW
+    rc['role'] = REVIEWER
+
+    # commits
+    css = get_commits(repo_slug).reset_index()[['author', 'sha', 'authored_at']]
+    repo = get_repository(repo_slug)
+    fp_commit_shas = {c.hexsha for c in get_fp_chain(repo)}
+    css['role'] = CONTRIBUTOR
+    css.loc[css['sha'].isin(fp_commit_shas), 'role'] = COLLABORATOR
+    css = css[pd.notnull(css['author'])]
+    css['event_type'] = COMMIT
+
+    events = pd.concat([
+        ie[['created_at', 'user', 'role', 'event_type']].rename(
+            columns={'created_at': 'date'}),
+        rc[['created_at', 'user', 'role', 'event_type']].rename(
+            columns={'created_at': 'date'}),
+        css[['author', 'authored_at', 'role', 'event_type']].rename(
+            columns={'author': 'user', 'authored_at': 'date'})
+    ], sort=True)
+    events['date'] = pd.to_datetime(events['date'])
+
+    return events.sort_values('date').reset_index(drop=True)
+
+
+def count_events(repo_slug, period='month',
+                 issues=False, reviews=False, commits=False, pull_requests=False):
+    # TODO: deprecate
+    assert issues or commits or pull_requests, \
+        "At least one event type should be requested"
+    events = _role_events(repo_slug)
+    if not issues:
+        events = events[events['event_type'] != ISSUE]
+    if not reviews:
+        events = events[events['event_type'] != REVIEW]
+    if not commits:
+        events = events[events['event_type'] != COMMIT]
+    if not pull_requests:
+        events = events[events['event_type'] != PULL_REQUEST]
+    date_format = period_formatstring(period)
+
+    return events['event_type'].groupby(
+        events['date'].dt.strftime(date_format)).count().rename('count')
+
+
+def fano_factor(repo_slug, period='month', event_types=(), roles=(),
+                timestamp=None, length=None):
+    """Compute Fano factor
+    https://en.wikipedia.org/wiki/Fano_factor
+    Computed as variance / mean
+
+    Args:
+        repo_slug (str):
+        period (str): either 'month' or 'week'
+        event_types (Union[Iterable, set]): event types to include
+            default: include everything
+        roles (Union[Iterable, set]): roles to include
+            default: include everything
+        timestamp (Optional[datetime.datetime]): timestamp at which to compute
+            Fano factor (this is the ENDING timestamp)
+        length (Optional[int]): number of periods to take into account,
+            all by default (before the timestamp)
+
+    Returns:
+        (float): Fano factor
+
+    >>> fano_factor(repo_slug, period='month', roles=(utils.COLLABORATOR,),
+    ...             timestamp='2018-12', length=12)
+    64.8233646729346
+    """
+    events = _role_events(repo_slug)
+    date_format = period_formatstring(period)
+
+    if event_types:
+        events = events[events['event_type'].isin(event_types)]
+    if roles:
+        events = events[events['role'].isin(roles)]
+
+    counts = events['event_type'].groupby(
+        events['date'].dt.strftime(date_format)).count().rename('count')
+
+    if timestamp:
+        counts = counts[counts.index < timestamp]
+    if length:
+        counts = counts.iloc[-length:]
+    return counts.var() / counts.mean()
+
+
+def _repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR):
+    """
+    TODO: make continuous index
+    Args:
+        repo_slug (str): self explanatory
+        period (str): either 'month' or 'week'
+        min_level (int): only consider users with at least this level of access
+
+    Returns:
+        pd.DataFrame:
+            rows are dates formatted according to period
+            columns are contributor GH usernames
+            values are 1 if this contributor contributed at most
+                <timeout> periods ago, 0 otherwise.
+    """
+    events = _role_events(repo_slug)
+    events = events.loc[events['role'] >= min_level, ['date', 'user']]
+    date_format = period_formatstring(period)
+    events['date'] = events['date'].dt.strftime(date_format)
+    events.drop_duplicates(inplace=True)
+    events['values'] = 1
+    return events.pivot(
+        index='date', columns='user', values='values').fillna(0).astype(int)
+
+
+def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
+                        timeout=6):
+    """
+    Args:
+        repo_slug (str): self explanatory
+        period (str): either 'month' or 'week'
+        min_level (int): only consider users with at least this level of access
+        timeout (int): number of periods since the last contribution for which
+            contributor remains active
+
+    Returns:
+        pd.DataFrame:
+            rows are dates formatted according to period
+            columns are contributor GH usernames
+            values are 1 if this contributor contributed at most
+                <timeout> periods ago, 0 otherwise.
+    """
+    contributors = _repo_contributors(repo_slug, period, min_level)
+    cm = contributors.copy()  # contributors matrix
+    for shift in range(1, timeout+1):
+        cm += cm.shift(shift, fill_value=0)
+    return (cm > 0).astype(int)
+
+
+def multi_teaming_index():
+    pass
 
 
 def extract_package_name(json_fname):
@@ -423,9 +710,13 @@ def extract_package_name(json_fname):
     except (IOError, ValueError):
         return None
 
+# def get_package_repo_slug(package_name):
 
-def repo_package_names(repo):
+
+def repo_package_names(repo_slug):
     """find all package.json in """
+    repo = get_repository(repo_slug)
+
     metadata_fname = 'package.json'
 
     def gen(workdir):
@@ -435,7 +726,11 @@ def repo_package_names(repo):
                 if pkgname is not None:
                     yield pkgname
 
-    return set(gen(repo.working_dir))
+    candidates = set(gen(repo.working_dir))
+
+    # TODO
+
+
 
 #
 # TODO: move to final.py
@@ -444,44 +739,3 @@ def repo_package_names(repo):
 #     repo_slugs = final_repos()
 #     return repo_slugs.map(
 #         lambda repo_slug: package_name(get_repository(repo_slug)))
-
-
-def get_collaborators(repo_slug):
-    # TODO: implement
-    # extract from master commits
-    # extract from events
-    pass
-
-
-def get_contributors(repo_slug):
-    # TODO: implement
-    pass
-
-
-def collaborators_timeline(repo_slug, timeout=6):
-    # TODO: implement
-    pass
-
-
-def capacity_timeline(repo_slug, timeout=6):
-    # TODO: implement
-    collaborators = collaborators_timeline(repo_slug, timeout)
-
-
-def MTI_timeline(repo_slug):
-    # TODO: implement
-    pass
-
-
-def issue_event_timeline(
-        start, length, granularity='M', restrict_events=None,
-        include_collaborators=True, include_contributors=True, include_users=True):
-    # TODO: implement
-    pass
-
-
-def fano_timeline(
-        start, length, granularity='M', restrict_events=None,
-        include_collaborators=True, include_contributors=True, include_users=True):
-    # TODO: implement
-    pass

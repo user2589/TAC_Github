@@ -1,3 +1,44 @@
+
+deploy GHTorrent and implement MTI using it
+fix the bug with contributors
+properly extract package names from multipackage repositories (check npm URL)
+add rolling-max parameter to fano factor (or events?)
+extract package quality/maintenance/popularity scores (for 34k packages)
+
+==============================
+
+- (DONE) get list of users and roles when they first took it.
+    who to count: three flags: collaborators, contributors, users (default: all True)
+        get issue/pr/commit events, associated with user names and roles
+
+- (DONE) for co-commit network, add custom granularity (only month and week)
+
+
+- (DONE) issue events should accept the same customization as fano factor
+- (DONE) fano factor - get a single number, accept timestamp, length and granularity as a parameter (default: month, 'M|W|D')
+    who to count: three flags: collaborators, contributors, users (default: all True)
+    activity should include: commits, issues, prs events - should accept list of event types to include (default: everything)
+    also, accept flag to include review comments (default: True)
+
+- (DONE) ask Bogdan to create a group and add us to that group
+- (will be done naturally) include repos over 50 assignees
+- (almost done) multipackage repositories - get average response variables
+    for packages identified through package.json:
+        use only those referring back to this repository as the project URL
+
+- (DONE): @packages - works for single package API
+- (DONE) team size using 6-month timeout is acceptable
+- (DONE) number of issues and issue events: accept an optional granularity parameter (default: month)
+- (in progress, GHTorrent) multi-teaming index: number of repositories for all repositories
+    # account for number of active contributors (i.e. active in the last 6 months)
+    # add another method to get average for all contributors  / in comments show how to make weighted average
+    Instead, return a dataframe with contributors as columns, rows as months.
+    Cells are number of projects they're active in,
+    for those who were inactive for 6+ months it should be NaN
+
+
+OLD list (safe to ignore):
+
 TAC:
 - check size of the core team
     - send an email with the distribution and decide the cutoff
