@@ -74,7 +74,6 @@ There is a group of similar definitions for event types.
                      timeout=6)`
     Similar to `_repo_contributors`, but "stretches" participation for the next 
     `timeout` periods.
-    IMPORTANT: there is a bug in this function, I'll fix it today (Mon May 13) 
                      
                      
                      

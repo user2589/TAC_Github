@@ -650,13 +650,14 @@ def fano_factor(repo_slug, period='month', event_types=(), roles=(),
     return counts.var() / counts.mean()
 
 
-def _repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR):
+def _repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR,
+                       end=None):
     """
-    TODO: make continuous index
     Args:
         repo_slug (str): self explanatory
         period (str): either 'month' or 'week'
         min_level (int): only consider users with at least this level of access
+        end (str): %Y-%m formatted end date of the observations
 
     Returns:
         pd.DataFrame:
@@ -671,12 +672,15 @@ def _repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR):
     events['date'] = events['date'].dt.strftime(date_format)
     events.drop_duplicates(inplace=True)
     events['values'] = 1
-    return events.pivot(
-        index='date', columns='user', values='values').fillna(0).astype(int)
+    rc = events.pivot(index='date', columns='user', values='values')
+
+    idx = pd.date_range(rc.index.min(), end or rc.index.max(),
+                        freq=period[0].capitalize()).strftime(date_format)
+    return rc.reindex(idx).fillna(0).astype(int)
 
 
 def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
-                        timeout=6):
+                        timeout=6, end=None):
     """
     Args:
         repo_slug (str): self explanatory
@@ -684,6 +688,7 @@ def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
         min_level (int): only consider users with at least this level of access
         timeout (int): number of periods since the last contribution for which
             contributor remains active
+        end (str): %Y-%m formatted end date of the observations
 
     Returns:
         pd.DataFrame:
@@ -692,7 +697,7 @@ def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
             values are 1 if this contributor contributed at most
                 <timeout> periods ago, 0 otherwise.
     """
-    contributors = _repo_contributors(repo_slug, period, min_level)
+    contributors = _repo_contributors(repo_slug, period, min_level, end=end)
     cm = contributors.copy()  # contributors matrix
     for shift in range(1, timeout+1):
         cm += cm.shift(shift, fill_value=0)
