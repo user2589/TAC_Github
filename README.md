@@ -75,7 +75,12 @@ There is a group of similar definitions for event types.
     Similar to `_repo_contributors`, but "stretches" participation for the next 
     `timeout` periods.
                      
-                     
+       
+`repos_package_names()`
+    Get package names hosted in all repositories.
+    Note that some repositories do not represent any packages, 
+    e.g. forks of original repos.              
+    
                      
 Quality, popularity and maintenance score:
     `repo_package_names(repo_slug)` extracts package names from the repository.

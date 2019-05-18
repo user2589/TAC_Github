@@ -7,6 +7,7 @@ Script for gathering GitHub data
 import csv
 import datetime
 import json
+import logging
 import os
 
 import choicemodels
@@ -17,7 +18,9 @@ import numpy as np
 import stscraper
 import stutils
 from stutils import decorators as d
+from stutils import mapreduce
 import stgithub
+from stecosystems import npm
 
 
 d.DEFAULT_EXPIRES = 3600*24*30*12
@@ -48,7 +51,7 @@ get_raw_pulls = cached_iterator(gh_api.repo_pulls)
 def all_projects():
     # type: () -> pd.Series
     """ Get list of all available projects """
-    pd.read_csv('34k_dataset_1000_3_10.csv', usecols=['repo'], squeeze=True)
+    return pd.read_csv('34k_dataset_1000_3_10.csv', usecols=['repo'], squeeze=True)
 
 
 def final_repos():
@@ -708,7 +711,23 @@ def multi_teaming_index():
     pass
 
 
-def extract_package_name(json_fname):
+@d.memoize
+def package_slug(package_name):
+    try:
+        package = npm.Package(package_name)
+    except npm.PackageDoesNotExist:
+        return None
+    try:
+        url = package.info['repository']['url']
+    except (TypeError, KeyError):
+        return None
+    slug = url.rsplit('github.com/', 1)[-1].strip('/')
+    while slug.endswith('.git'):
+        slug = slug[:-4]
+    return slug
+
+
+def json_package_name(json_fname):
     try:
         with open(json_fname) as fh:
             return json.load(fh).get('name')
@@ -727,13 +746,33 @@ def repo_package_names(repo_slug):
     def gen(workdir):
         for root, dirs, files in os.walk(workdir):
             if metadata_fname in files:
-                pkgname = extract_package_name(os.path.join(root, metadata_fname))
-                if pkgname is not None:
+                pkgname = json_package_name(os.path.join(root, metadata_fname))
+                if pkgname and package_slug(pkgname) == repo_slug:
                     yield pkgname
 
-    candidates = set(gen(repo.working_dir))
+    return set(gen(repo.working_dir))
 
-    # TODO
+
+@d.fs_cache(expires=ONE_YEAR)
+def repos_package_names():
+    """ Get packages included in all projects (repositories)
+
+    Returns:
+        pd.Series where index is a repo slug
+            and values are comma separated package names
+    """
+    def pkgname(_, repo_slug):
+        logging.info(repo_slug)
+        try:
+            return ",".join(repo_package_names(repo_slug))
+        except:
+            return None
+
+    ap = all_projects()
+    pkgnames = mapreduce.map(pkgname, ap)
+
+    return pd.Series(pkgnames.values, index=ap.values, name='pkgnames')
+
 
 
 
