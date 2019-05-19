@@ -87,3 +87,8 @@ There is a group of similar definitions for event types.
     of packages identified by `repos_package_names()`.
     Index is package names, three columns are 
     `maintenance_score`, `popularity`, and `quality`.
+    
+    
+`multiteaming_index(repo_slug, period='month', min_level=CONTRIBUTOR)`
+    See the docstring.
+    Typically, you would want to sum up on rows, perhaps weighting by number of commits.

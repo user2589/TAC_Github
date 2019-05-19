@@ -22,6 +22,7 @@ from stutils import mapreduce
 # import stgithub
 from stecosystems import npm
 
+import ghtorrent
 
 d.DEFAULT_EXPIRES = 3600*24*30*12
 
@@ -297,6 +298,7 @@ def get_committers(repo_slug):
 
 
 def _get_choice_table(repo_slug):
+    # TODO: deprecate
     commits = get_commits(repo_slug)
     profiles = {}
     assignments = get_assignments(repo_slug)
@@ -355,10 +357,12 @@ def _get_choice_table(repo_slug):
 
 @fs_cache_filtered('choice_table')
 def get_choice_table(repo_slug):
+    # TODO: deprecate
     return pd.DataFrame(_get_choice_table(repo_slug))
 
 
 def get_mnl_params(repo_slug):
+    # TODO: deprecate
     m = choicemodels.MultinomialLogit(
         get_choice_table(repo_slug),
         'unavailable + log_n_commits + log_inactive + log_n_commits_recent '
@@ -368,13 +372,8 @@ def get_mnl_params(repo_slug):
     return m.fit().fitted_parameters
 
 
-def get_all_packages():
-    reader = csv.DictReader(open('34k_dataset_1000_3_10.csv'))
-    for row in reader:
-        yield row['repo']
-
-
 def core_contributors(project, threshold=0.8):
+    # TODO: deprecate
     commit_stats = get_commits(project)[
         ['author', 'authored_at']].groupby('author').count()[
         'authored_at'].sort_values(ascending=False).rename('commits')
@@ -570,6 +569,7 @@ def _role_events(repo_slug):
 
     # commits
     css = get_commits(repo_slug).reset_index()[['author', 'sha', 'authored_at']]
+    css = css[pd.notnull(css['author'])]
     repo = get_repository(repo_slug)
     fp_commit_shas = {c.hexsha for c in get_fp_chain(repo)}
     css['role'] = CONTRIBUTOR
@@ -679,7 +679,10 @@ def _repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR,
 
     idx = pd.date_range(rc.index.min(), end or rc.index.max(),
                         freq=period[0].capitalize()).strftime(date_format)
-    return rc.reindex(idx).fillna(0).astype(int)
+    contributors = rc.reindex(idx).fillna(0).astype(int)
+    if np.nan in contributors:
+        contributors = contributors.drop(columns=[np.nan])
+    return contributors
 
 
 def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
@@ -705,10 +708,6 @@ def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
     for shift in range(1, timeout+1):
         cm += cm.shift(shift, fill_value=0)
     return (cm > 0).astype(int)
-
-
-def multi_teaming_index():
-    pass
 
 
 @d.memoize
@@ -806,9 +805,15 @@ def package_scores():
     return pd.DataFrame(scores, index=package_names)
 
 
-# TODO: move to final.py
-# @d.fs_cache('final')
-# def package_names():
-#     repo_slugs = final_repos()
-#     return repo_slugs.map(
-#         lambda repo_slug: package_name(get_repository(repo_slug)))
+def multiteaming_index(repo_slug, period='month', min_level=CONTRIBUTOR):
+    """
+    Returns:
+        same format of the dataframe as _repo_contributors,
+        but values now are number of repositories user committed to
+        in a given month
+    """
+    contributors = _repo_contributors(repo_slug, period, min_level=min_level)
+    multitasking = pd.concat(
+        [ghtorrent.user_timeline(user) for user in contributors.columns],
+        axis=1, sort=False).reindex(contributors.index).fillna(0).astype(int)
+    return contributors * multitasking
