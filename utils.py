@@ -10,7 +10,7 @@ import json
 import logging
 import os
 
-import choicemodels
+# import choicemodels
 import git
 import pandas as pd
 import networkit as nk
@@ -19,7 +19,7 @@ import stscraper
 import stutils
 from stutils import decorators as d
 from stutils import mapreduce
-import stgithub
+# import stgithub
 from stecosystems import npm
 
 
@@ -774,9 +774,38 @@ def repos_package_names():
     return pd.Series(pkgnames.values, index=ap.values, name='pkgnames')
 
 
+def _package_scores(package_name):
+    try:
+        package = npm.Package(package_name)
+    except npm.PackageDoesNotExist:
+        return {}
+    return {
+        'quality': package.quality,
+        'maintenance_score': package.maintenance_score,
+        'popularity': package.popularity
+    }
 
 
-#
+@d.fs_cache(expires=ONE_YEAR)
+def package_scores():
+    """Get quality, maintenance and popularity scores for packages returned by
+    `repos_package_names()`
+    """
+    package_names = []  # 35k packages total
+    for repo_slug, pkgnames in repos_package_names().iteritems():
+        logging.info(repo_slug)
+        if pkgnames and pd.notnull(pkgnames):
+            package_names.extend(pkgnames.split(","))
+
+    def get_scores(i, package_name):
+        logging.info("%d: %s", i, package_name)
+        return _package_scores(package_name)
+
+    scores = mapreduce.map(get_scores, package_names)
+
+    return pd.DataFrame(scores, index=package_names)
+
+
 # TODO: move to final.py
 # @d.fs_cache('final')
 # def package_names():

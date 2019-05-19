@@ -79,17 +79,11 @@ There is a group of similar definitions for event types.
 `repos_package_names()`
     Get package names hosted in all repositories.
     Note that some repositories do not represent any packages, 
-    e.g. forks of original repos.              
-    
-                     
-Quality, popularity and maintenance score:
-    `repo_package_names(repo_slug)` extracts package names from the repository.
-    Then, instantiate an npm package object:
-    ```
-    from stecosystems import npm
-    package = npm.Package(package_name)
-    # available properties:
-    package.quality
-    package.maintenance_score
-    package.popularity
-    ```
+    e.g. forks of original repos.
+
+
+`package_scores()`
+    Get a dataframe with popularity, maintenance and quality scores 
+    of packages identified by `repos_package_names()`.
+    Index is package names, three columns are 
+    `maintenance_score`, `popularity`, and `quality`.

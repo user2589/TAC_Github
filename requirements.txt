@@ -1,3 +1,8 @@
+networkit
+numpy
 pandas
 strudel.scraper
 strudel.utils
+# strudel.ghutils
+strudel.ecosystems
+sqlalchemy

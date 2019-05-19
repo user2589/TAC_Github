@@ -3,7 +3,7 @@
 (DONE) properly extract package names from multipackage repositories (check npm URL)
 deploy GHTorrent and implement MTI using it
 add rolling-max parameter to fano factor (or events?)
-extract package quality/maintenance/popularity scores (for 34k packages)
+(DONE) extract package quality/maintenance/popularity scores (for 34k packages)
 
 ==============================
 
