@@ -453,6 +453,11 @@ def _role_events(repo_slug):
                 is indicated by the event
             `role`: role assumed by this event
                 (not the prior history, just this event).
+            `adj_role`: adjusted role. E.g., if we observe user A generating
+                an event that requires CONTRIBUTOR permissions but previously
+                user A was spotted to be a COLLABORATOR,
+                the new event will be marked as COLLABORATOR
+                NOTE: this feature adds ~%10 to processing time
 
     >>> utils._role_events('mui-org/material-ui').head()
                            date  event_type  role     user
@@ -461,7 +466,6 @@ def _role_events(repo_slug):
     2 2014-08-18 20:20:46+00:00           8     7  hai-cea
     3 2014-08-18 20:27:12+00:00           8     5  hai-cea
     4 2014-08-18 20:51:32+00:00           8     7  hai-cea
-
     """
     # get reporters and type
     # get_issue_events returns events for both issues and pull requests
@@ -502,7 +506,22 @@ def _role_events(repo_slug):
     ], sort=True)
     events['date'] = pd.to_datetime(events['date'])
 
-    return events.sort_values('date').reset_index(drop=True)
+    events = events.sort_values('date').reset_index(drop=True)
+
+    ur = events[['date', 'role', 'user']].groupby(['user', 'role']).min()
+    ur = ur['date'].unstack(level=-1)
+    # now ur (user_roles) rows are users, columns are roles,
+    #   values are date when the user was first observed in this role
+
+    def adj_role(row):
+        if not row['user'] or pd.isnull(row['user']):
+            return row['role']
+        roles = ur.loc[row['user']]
+        return roles[roles <= row['date']].index.max()
+
+    events['adj_role'] = events.apply(adj_role, axis=1)
+
+    return events
 
 
 def count_events(repo_slug, period='month',
@@ -526,7 +545,7 @@ def count_events(repo_slug, period='month',
 
 
 def fano_factor(repo_slug, period='month', event_types=(), roles=(),
-                timestamp=None, length=None):
+                adj_roles=(), timestamp=None, length=None):
     """Compute Fano factor
     https://en.wikipedia.org/wiki/Fano_factor
     Computed as variance / mean
@@ -538,6 +557,8 @@ def fano_factor(repo_slug, period='month', event_types=(), roles=(),
             default: include everything
         roles (Union[Iterable, set]): roles to include
             default: include everything
+        adj_roles (Union[Iterable, set]): similar to roles,
+            check _role_events docstring for the difference
         timestamp (Optional[datetime.datetime]): timestamp at which to compute
             Fano factor (this is the ENDING timestamp)
         length (Optional[int]): number of periods to take into account,
@@ -557,6 +578,8 @@ def fano_factor(repo_slug, period='month', event_types=(), roles=(),
         events = events[events['event_type'].isin(event_types)]
     if roles:
         events = events[events['role'].isin(roles)]
+    if adj_roles:
+        events = events[events['adj_role'].isin(roles)]
 
     counts = events['event_type'].groupby(
         events['date'].dt.strftime(date_format)).count().rename('count')

@@ -29,7 +29,7 @@ There is a group of similar definitions for event types.
     first_roles = events[['date', 'role', 'user']].groupby(['user', 'role']).first()
     first_roles.head(12)
     
-        user         role                          
+      user    role                         date                         
     0x0ece       5    2015-02-24 00:49:14+00:00
     170102       2    2017-04-19 17:29:18+00:00
     17x          3    2017-12-27 07:52:49+00:00
@@ -41,7 +41,7 @@ There is a group of similar definitions for event types.
     4xDMG        3    2018-01-17 21:04:06+00:00
     59naga       2    2016-03-11 19:01:03+00:00
                  5    2016-05-15 22:32:40+00:00
-    ```
+    ```    
     
 `count_events(repo_slug, period='month',
               issues=False, reviews=False, commits=False, pull_requests=False)`
@@ -67,8 +67,9 @@ There is a group of similar definitions for event types.
     
 `_repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR)`
     Get a dataframe with timestamps in index and users in columns; 
-    values are 1 when user contributed somethign in the specified role 
+    values are 1 when user contributed something in the specified role 
     and 0 otherwise.
+    
 
 `contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
                      timeout=6)`

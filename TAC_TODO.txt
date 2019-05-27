@@ -2,7 +2,7 @@
 (DONE) fix the bug with contributors
 (DONE) properly extract package names from multipackage repositories (check npm URL)
 (DONE) deploy GHTorrent and implement MTI using it
-add rolling-max parameter to fano factor (or events?)
+(DONE) add rolling-max parameter to fano factor (or events?)
 (DONE) extract package quality/maintenance/popularity scores (for 34k packages)
 
 ==============================
