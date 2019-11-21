@@ -1,4 +1,6 @@
+# requires sudo apt-get install libmysqlclient-dev libssl-dev
 mysqlclient
+# requires pip install Cython
 networkit
 numpy
 pandas

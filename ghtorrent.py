@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 
 USER = 'ghtorrent_user'
 PASSWORD = 'ghtorrent_password'
-HOST = 'localhost'
+HOST = '127.0.0.1'
 DATABASE = 'ghtorrent-2018-03'
 
 engine = create_engine(

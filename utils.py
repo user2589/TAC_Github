@@ -9,17 +9,21 @@ import datetime
 import json
 import logging
 import os
+import re
+import time
 
 # import choicemodels
 import git
 import pandas as pd
 import networkit as nk
 import numpy as np
+import requests
+import six
 import stscraper
 import stutils
 from stutils import decorators as d
 from stutils import mapreduce
-# import stgithub
+import stgithub
 from stecosystems import npm
 
 import ghtorrent
@@ -504,7 +508,8 @@ def _role_events(repo_slug):
         css[['author', 'authored_at', 'role', 'event_type']].rename(
             columns={'author': 'user', 'authored_at': 'date'})
     ], sort=True)
-    events['date'] = pd.to_datetime(events['date'])
+    # by some reason, doesn't work on a series (bug in pandas?)
+    events['date'] = events['date'].map(pd.to_datetime)
 
     events = events.sort_values('date').reset_index(drop=True)
 
@@ -514,7 +519,9 @@ def _role_events(repo_slug):
     #   values are date when the user was first observed in this role
 
     def adj_role(row):
-        if not row['user'] or pd.isnull(row['user']):
+        if (not row['user']
+                or pd.isnull(row['user'])
+                or row['user'] not in ur.index):
             return row['role']
         roles = ur.loc[row['user']]
         return roles[roles <= row['date']].index.max()
@@ -649,6 +656,45 @@ def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
 
 
 @d.memoize
+def npm_info(package_name):
+    """ Same as  """
+    url = ('https://api.npms.io/v2/package/' +
+           six.moves.urllib.parse.quote_plus(package_name))
+    for i in range(3):
+        try:
+            r = requests.get(url)
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout):
+            continue
+        if r.ok:
+            p = r.json()
+            m = re.search(r'github.com/[\w-]+/[\w-]+', r.text)
+            # json structure varies, so url can be in different places.
+            # Hence, grepping it in the response text
+            if m:
+                url = m.group(0)
+                while url.endswith('.git'):
+                    url = url[:-4]
+            else:
+                url = ''
+            return {
+                'npm_quality': p['score']['detail']['quality'],
+                'npm_maintenance': p['score']['detail']['maintenance'],
+                'npm_popularity': p['score']['detail']['popularity'],
+                'npm_analyzed_at': p['analyzedAt'],
+                'npm_final': p['score']['final'],
+                'npm_downloads': int(p['evaluation']['popularity'][
+                    'downloadsCount']),
+                'npm_repo': url
+            }
+        elif r.status_code == 429:
+            time.sleep(3)
+        else:
+            return {'error': 'Failed to retrieve npm_info'}
+    raise IOError('Failed to obtain npm info (timeout): ' + package_name)
+
+
+@d.memoize
 def package_slug(package_name):
     try:
         package = npm.Package(package_name)
@@ -684,7 +730,13 @@ def repo_package_names(repo_slug):
         for root, dirs, files in os.walk(workdir):
             if metadata_fname in files:
                 pkgname = json_package_name(os.path.join(root, metadata_fname))
-                if pkgname and package_slug(pkgname) == repo_slug:
+                if not pkgname:
+                    continue
+                info = npm_info(pkgname)
+                if 'error' in info:
+                    continue
+                slug = info['npm_repo'].split('github.com/', 1)[-1]
+                if slug == repo_slug:
                     yield pkgname
 
     return set(gen(repo.working_dir))
