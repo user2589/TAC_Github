@@ -26,7 +26,28 @@ from stutils import mapreduce
 import stgithub
 from stecosystems import npm
 
-import ghtorrent
+from sqlalchemy import create_engine
+
+USER = 'ghtorrent_user'
+PASSWORD = 'ghtorrent_password'
+HOST = '127.0.0.1'
+DATABASE = 'ghtorrent-2018-03'
+
+engine = create_engine(
+    'mysql+mysqldb://{user}:{password}@{host}/{database}?charset=utf8mb4'
+    ''.format(user=USER, password=PASSWORD, host=HOST, database=DATABASE),
+    pool_recycle=3600)
+
+
+# same as utils.GRANULARITY_LEVELS,
+# but MySQL is using lowercase "v" for 1-based weeks starting on Monday
+# instead of capital "V"
+DATE_FORMAT = "%Y-%m"
+DATE_FORMATS = {
+    'week': "%Y-w%v",
+    'day': "%Y-%m-%d"
+}
+
 
 d.DEFAULT_EXPIRES = 3600*24*30*12
 
@@ -47,6 +68,19 @@ get_raw_issues = cached_iterator(gh_api.repo_issues)
 get_raw_issue_comments = cached_iterator(gh_api.repo_issue_comments)
 get_raw_issue_events = cached_iterator(gh_api.repo_issue_events)
 get_raw_pulls = cached_iterator(gh_api.repo_pulls)
+
+
+@fs_cache_filtered('user_timeline')
+def user_timeline(user):
+    return pd.read_sql("""
+        SELECT DATE_FORMAT(c.created_at, %(date_format)s) as month, count(distinct c.project_id) as cnt 
+        FROM commits c, users u 
+        WHERE c.author_id = u.id AND u.login=%(user)s 
+        GROUP BY DATE_FORMAT(c.created_at, %(date_format)s) order by month
+        """,
+        engine,
+        params={'user': user, 'date_format': DATE_FORMAT}
+    ).set_index('month')['cnt'].rename(user)
 
 
 # =====================================
@@ -368,6 +402,7 @@ def get_commit_graph(repo, period='month'):
     return g, modularity, nodes
 
 
+@fs_cache_filtered('modularity')
 def get_commit_modularity(repo, period='month'):
     """
 
@@ -442,6 +477,7 @@ EVENT_ROLES = {  # assuming user != reporter
 }
 
 
+@fs_cache_filtered('role_events')
 def _role_events(repo_slug):
     """Get all events indicating user roles
 
@@ -474,6 +510,8 @@ def _role_events(repo_slug):
     # get reporters and type
     # get_issue_events returns events for both issues and pull requests
     iss = get_issues_and_prs(repo_slug)
+    # due to paging, rarely there are duplicates
+    iss = iss.loc[~iss.index.duplicated()]
     ie = get_issue_events(repo_slug)
     ie['reporter'] = ie.index.map(iss['user'])
     ie['is_pr'] = ie.index.map(iss['is_pr'])
@@ -509,7 +547,9 @@ def _role_events(repo_slug):
             columns={'author': 'user', 'authored_at': 'date'})
     ], sort=True)
     # by some reason, doesn't work on a series (bug in pandas?)
-    events['date'] = events['date'].map(pd.to_datetime)
+    # since periods other than month aren't supported,
+    # there is no need to convert to datetime
+    # events['date'] = events['date'].map(pd.to_datetime)
 
     events = events.sort_values('date').reset_index(drop=True)
 
@@ -545,10 +585,10 @@ def count_events(repo_slug, period='month',
         events = events[events['event_type'] != COMMIT]
     if not pull_requests:
         events = events[events['event_type'] != PULL_REQUEST]
-    date_format = period_formatstring(period)
+    # date_format = period_formatstring(period)
 
     return events['event_type'].groupby(
-        events['date'].dt.strftime(date_format)).count().rename('count')
+        events['date'].str[:7]).count().rename('count')
 
 
 def fano_factor(repo_slug, period='month', event_types=(), roles=(),
@@ -598,8 +638,7 @@ def fano_factor(repo_slug, period='month', event_types=(), roles=(),
     return counts.var() / counts.mean()
 
 
-def _repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR,
-                       end=None):
+def _repo_contributors(repo_slug, min_level=CONTRIBUTOR):
     """
     Args:
         repo_slug (str): self explanatory
@@ -616,22 +655,22 @@ def _repo_contributors(repo_slug, period='month', min_level=CONTRIBUTOR,
     """
     events = _role_events(repo_slug)
     events = events.loc[events['role'] >= min_level, ['date', 'user']]
-    date_format = period_formatstring(period)
-    events['date'] = events['date'].dt.strftime(date_format)
+    # events['date'] = events['date'].dt.strftime(date_format)
+    events['date'] = events['date'].str[:7]
     events.drop_duplicates(inplace=True)
     events['values'] = 1
     rc = events.pivot(index='date', columns='user', values='values')
 
-    idx = pd.date_range(rc.index.min(), end or rc.index.max(),
-                        freq=period[0].capitalize()).strftime(date_format)
+    idx = pd.date_range(rc.index.min(), rc.index.max(), freq='MS'
+                        ).strftime(DATE_FORMAT)
     contributors = rc.reindex(idx).fillna(0).astype(int)
     if np.nan in contributors:
         contributors = contributors.drop(columns=[np.nan])
     return contributors
 
 
-def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
-                        timeout=6, end=None):
+@fs_cache_filtered('contribution_matrix')
+def contribution_matrix(repo_slug, min_level=CONTRIBUTOR, timeout=0):
     """
     Args:
         repo_slug (str): self explanatory
@@ -648,7 +687,7 @@ def contribution_matrix(repo_slug, period='month', min_level=CONTRIBUTOR,
             values are 1 if this contributor contributed at most
                 <timeout> periods ago, 0 otherwise.
     """
-    contributors = _repo_contributors(repo_slug, period, min_level, end=end)
+    contributors = _repo_contributors(repo_slug, min_level)
     cm = contributors.copy()  # contributors matrix
     for shift in range(1, timeout+1):
         cm += cm.shift(shift, fill_value=0)
@@ -668,7 +707,7 @@ def npm_info(package_name):
             continue
         if r.ok:
             p = r.json()
-            m = re.search(r'github.com/[\w-]+/[\w-]+', r.text)
+            m = re.search(r'github.com/[\w\.-]+/[\w\.-]+', r.text)
             # json structure varies, so url can be in different places.
             # Hence, grepping it in the response text
             if m:
@@ -714,7 +753,7 @@ def json_package_name(json_fname):
     try:
         with open(json_fname) as fh:
             return json.load(fh).get('name')
-    except (IOError, ValueError):
+    except (IOError, ValueError, AttributeError):
         return None
 
 # def get_package_repo_slug(package_name):
@@ -795,15 +834,29 @@ def package_scores():
     return pd.DataFrame(scores, index=package_names)
 
 
-def multiteaming_index(repo_slug, period='month', min_level=CONTRIBUTOR):
+@fs_cache_filtered('multiteaming_index')
+def multiteaming_index(repo_slug, min_level=CONTRIBUTOR):
     """
     Returns:
         same format of the dataframe as _repo_contributors,
         but values now are number of repositories user committed to
         in a given month
     """
-    contributors = _repo_contributors(repo_slug, period, min_level=min_level)
-    multitasking = pd.concat(
-        [ghtorrent.user_timeline(user) for user in contributors.columns],
-        axis=1, sort=False).reindex(contributors.index).fillna(0).astype(int)
-    return contributors * multitasking
+    contributors = _repo_contributors(repo_slug, min_level=min_level).columns
+    df = pd.read_sql("""
+        SELECT u.login as login,
+            DATE_FORMAT(c.created_at, %(date_format)s) as month,
+            count(distinct c.project_id) as cnt
+        FROM commits c, users u
+        WHERE c.author_id = u.id
+            AND u.login IN %(users)s
+        GROUP BY DATE_FORMAT(c.created_at, %(date_format)s), u.login
+        ORDER BY month""",
+        engine, params={'date_format': "%Y-%m",
+                        'users': tuple(contributors)})
+    return df.pivot(
+        index='month', columns='login', values='cnt').fillna(0).astype(int)
+    # multitasking = pd.concat(
+    #     [user_timeline(user) for user in contributors.columns],
+    #     axis=1, sort=False).reindex(contributors.index).fillna(0).astype(int)
+    # return contributors * multitasking
